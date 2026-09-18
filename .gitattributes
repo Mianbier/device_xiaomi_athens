@@ -1,0 +1,15 @@
+# 强制文本文件使用 LF —— 设备树要推到 Linux CI 上编译，
+# CRLF 会让 makefile / shell 脚本出错。
+* text=auto eol=lf
+
+*.mk            text eol=lf
+*.sh            text eol=lf
+*.bp            text eol=lf
+*.prop          text eol=lf
+*.fstab         text eol=lf
+*.md            text eol=lf
+
+# 二进制资源，绝不能做行尾转换
+prebuilt/*      binary
+*.img           binary
+*.ko            binary

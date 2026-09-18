@@ -1,0 +1,10 @@
+// =============================================================================
+// Android.bp — Soong namespace 注册
+// Device: Xiaomi athens (Redmi K100 Pro)
+//
+// 把本设备目录注册为 Soong namespace, 供 twrp_athens.mk / device.mk 里的
+// PRODUCT_SOONG_NAMESPACES 引用。
+// =============================================================================
+
+soong_namespace {
+}

@@ -1,0 +1,9 @@
+# =============================================================================
+# vendor.prop — vendor 属性覆盖
+# =============================================================================
+
+# Gatekeeper: 关闭 SPU 路径 (OrangeFox/TWRP 解密需要)
+vendor.gatekeeper.disable_spu=true
+
+# USB: 使用 ffs MTP
+vendor.usb.use_ffs_mtp=1
