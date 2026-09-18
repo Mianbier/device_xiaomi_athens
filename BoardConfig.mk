@@ -165,6 +165,7 @@ TARGET_RECOVERY_PIXEL_FORMAT := "RGBX_8888"
 TW_THEME := portrait_hdpi
 TW_FRAMERATE := 120
 TW_NO_SCREEN_BLANK := true
+TW_SCREEN_BLANK_ON_BOOT := true
 
 TW_BRIGHTNESS_PATH := "/sys/class/backlight/panel0-backlight/brightness"
 TW_MAX_BRIGHTNESS := 16383
@@ -192,14 +193,33 @@ TW_OVERRIDE_SYSTEM_PROPS := "ro.build.fingerprint=ro.vendor.build.fingerprint;ro
 TARGET_RECOVERY_QCOM_RTC_FIX := true
 RECOVERY_SDCARD_ON_DATA := true
 
-# 振动 (AIDL)
+# =========================================================
+# 输入 / 触摸  (原厂触摸 IC = FocalTech FT3685G, 驱动在 vendor_dlkm)
+#   与同平台 SM8850/canoe 的 myron(K90 Pro Max) / songyuan(K100 Pro Max)
+#   已验证配置对齐。
+# =========================================================
+TW_CUSTOM_TOUCH_DEVICE := "/dev/input/event7"
+# uinput-xiaomi 是小米的虚拟输入设备, 会被 TWRP 误判为触摸屏 -> 必须排除
+TW_INPUT_BLACKLIST := "hbtp_vm:uinput-xiaomi"
+
+# 振动
 TW_SUPPORT_INPUT_AIDL_HAPTICS := true
 TW_SUPPORT_INPUT_AIDL_HAPTICS_FIX_OFF := true
 TW_SUPPORT_INPUT_AIDL_HAPTICS_FQNAME := "IVibrator/vibratorfeature"
+TW_NO_HAPTICS := false
 
-# 内核模块 (从原厂 vendor_boot 的 vendor_ramdisk 实测提取)
-TW_LOAD_VENDOR_MODULES := "bq27z561.ko qti_battery_charger.ko xiaomi_touch.ko panel_event_notifier.ko msm_drm.ko adsp_loader_dlkm.ko"
+# =========================================================
+# 内核模块
+#   来源: /vendor/lib/modules -> /vendor_dlkm/lib/modules
+#   顺序按依赖链排列 (base QMI/GLINK/PDR/RPROC -> ADSP/Q6 -> PCIe/USB/网络
+#   -> WLAN -> PMIC/panel/touch/flash/haptics -> secure invoke)
+#   触摸链: gh_irq_lend.ko -> panel_event_notifier.ko -> xiaomi_touch.ko
+#           -> focaltech_touch_3685g.ko
+#   注: athens 用 focaltech_touch_3685g.ko (songyuan 是 _1 变体, 不可混用)
+# =========================================================
+TW_LOAD_VENDOR_MODULES := "bq27z561.ko qmi_helpers.ko qcom_glink.ko qcom_glink_smem.ko qcom_smd.ko rproc_qcom_common.ko qcom_pdr_msg.ko pdr_interface.ko qcom_sysmon.ko qcom_q6v5.ko qcom_ramdump.ko qcom_va_minidump.ko qcom_pil_info.ko qcom_q6v5_pas.ko q6_pdr_dlkm.ko q6_notifier_dlkm.ko snd_event_dlkm.ko gpr_dlkm.ko spf_core_dlkm.ko adsp_loader_dlkm.ko q6_dlkm.ko pcie-pdc.ko pci-msm-drv.ko mhi.ko wcd_usbss_i2c.ko usb_f_gsi.ko dwc3-msm.ko repeater.ko redriver.ko ipam.ko gsim.ko rmnet_mem.ko smem-mailbox.ko cfg80211.ko mac80211.ko wlan_firmware_service.ko cnss_prealloc.ko cnss_utils.ko cnss_nl.ko cnss_plat_ipc_qmi_svc.ko cnss2.ko qca_cld3_peach_v2.ko qca_cld3_wcn7750.ko qti_pmic_glink.ko qti_battery_charger.ko panel_event_notifier.ko gh_irq_lend.ko xiaomi_touch.ko focaltech_touch_3685g.ko swr_dlkm.ko mca_sysfs.ko mca_event.ko mca_log.ko mca_parse_dts.ko mca_charge_mievent.ko mca_protocol_class.ko mca_protocol_qc_class.ko mca_platform_bc12_class.ko mca_platform_buckchg_class.ko mca_strategy_class.ko mca_adsp_glink.ko mca_qcom_subpmic_proxy.ko leds-qcom-flash.ko leds-qpnp-vibrator-ldo.ko qcom-hv-haptics.ko swr_haptics_dlkm.ko smcinvoke_dlkm.ko qsee_ipc_irq_bridge.ko stm_st54se_gpio.ko stm_nfc_i2c.ko"
 TW_LOAD_VENDOR_MODULES_EXCLUDE_GKI := true
+TW_LOAD_PREBUILT_MODULES_AT_FIRST := true
 
 # =========================================================
 # 日志 / 调试 (首次编译保留, 稳定后可关)
