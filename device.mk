@@ -28,6 +28,9 @@ AB_OTA_UPDATER := true
 # --- Virtual A/B ---
 $(call inherit-product, $(SRC_TARGET_DIR)/product/virtual_ab_ota.mk)
 
+# 注: 设备上还有 system_dlkm / mi_ext 两个动态分区, 但 fox_12.1 的构建系统
+#     不承认它们, 放进 AB_OTA_PARTITIONS 会触发校验报错, 故此处不列。
+#     TWRP 运行时通过 lpdump 读真实 super 布局, 仍可挂载。
 AB_OTA_PARTITIONS ?= \
     boot \
     init_boot \
@@ -41,9 +44,7 @@ AB_OTA_PARTITIONS ?= \
     product \
     vendor \
     vendor_dlkm \
-    system_dlkm \
-    odm \
-    mi_ext
+    odm
 
 # --- A/B 相关包 ---
 PRODUCT_PACKAGES += \

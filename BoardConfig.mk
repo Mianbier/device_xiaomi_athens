@@ -95,8 +95,13 @@ BOARD_CACHEIMAGE_PARTITION_SIZE := 0
 BOARD_SUPER_PARTITION_SIZE := 12884901888
 BOARD_SUPER_PARTITION_GROUPS := qti_dynamic_partitions
 BOARD_QTI_DYNAMIC_PARTITIONS_SIZE := 12880707584     # super - 4 MB
+# ⚠️ fox_12.1 的 config.mk 会校验此列表, 只接受它认识的动态分区名。
+#    设备上真实存在的 system_dlkm / mi_ext 在 12.1 里不被承认, 必须剔除,
+#    否则报: BOARD_QTI_DYNAMIC_PARTITIONS_PARTITION_LIST contains invalid
+#    partition name system_dlkm mi_ext
+#    (TWRP 运行时靠 lpdump 读真实 super 布局, 所以照样能挂载这两个分区)
 BOARD_QTI_DYNAMIC_PARTITIONS_PARTITION_LIST := \
-    system system_ext product vendor vendor_dlkm system_dlkm odm mi_ext
+    system system_ext product vendor vendor_dlkm odm
 
 # =========================================================
 # 文件系统
@@ -111,10 +116,10 @@ BOARD_VENDORIMAGE_FILE_SYSTEM_TYPE := erofs
 TARGET_COPY_OUT_VENDOR := vendor
 BOARD_VENDOR_DLKMIMAGE_FILE_SYSTEM_TYPE := erofs
 TARGET_COPY_OUT_VENDOR_DLKM := vendor_dlkm
-BOARD_SYSTEM_DLKMIMAGE_FILE_SYSTEM_TYPE := erofs
-TARGET_COPY_OUT_SYSTEM_DLKM := system_dlkm
 BOARD_ODMIMAGE_FILE_SYSTEM_TYPE := erofs
 TARGET_COPY_OUT_ODM := odm
+# 注: system_dlkm / mi_ext 在 fox_12.1 中不被构建系统承认, 故不声明其
+#     BOARD_*IMAGE_FILE_SYSTEM_TYPE / TARGET_COPY_OUT_*, 否则会被当作未知分区处理。
 
 TARGET_USERIMAGES_USE_F2FS := true
 TARGET_USERIMAGES_USE_EXT4 := true
@@ -207,11 +212,10 @@ TARGET_RECOVERY_DEVICE_MODULES += strace
 RECOVERY_BINARY_SOURCE_FILES += $(TARGET_OUT_EXECUTABLES)/strace
 
 # =========================================================
-# VNDK
-# =========================================================
-BOARD_VNDK_VERSION := current
-
-# =========================================================
 # 额外 vendor 属性
 # =========================================================
 TARGET_VENDOR_PROP += $(DEVICE_PATH)/vendor.prop
+
+# 注: 不设 BOARD_VNDK_VERSION —— 本设备树不构建任何 vendor 模块,
+#     而 fox_12.1 的 VNDK 快照不一定齐全, 设了反而可能报错。
+#     (参考同分支可用树 marble 也未设置)
