@@ -1,0 +1,27 @@
+# ==========================================================
+# recovery.fstab — Redmi K100 Pro (athens)
+# A/B 设备, 动态分区 (位于 super 内)
+# 格式: <块设备> <挂载点> <文件系统> <挂载选项> <fs_mgr 标志>
+# 注: /data 为 Android 17 f2fs + metadata 加密, OrangeFox 主线无法解密, 属已知限制
+# ==========================================================
+
+# 物理分区
+/dev/block/by-name/boot        /boot        emmc    defaults    defaults
+/dev/block/by-name/recovery    /recovery    emmc    defaults    defaults
+/dev/block/by-name/vbmeta      /vbmeta      emmc    defaults    defaults
+/dev/block/by-name/misc        /misc        emmc    defaults    defaults
+/dev/block/by-name/dtbo        /dtbo        emmc    defaults    defaults
+
+# 动态分区 (super 内)
+/dev/block/by-name/system       /system        ext4    ro,defaults    wait,logical
+/dev/block/by-name/system_ext   /system_ext    ext4    ro,defaults    wait,logical
+/dev/block/by-name/vendor       /vendor        ext4    ro,defaults    wait,logical
+/dev/block/by-name/vendor_dlkm  /vendor_dlkm   ext4    ro,defaults    wait,logical
+/dev/block/by-name/product      /product       ext4    ro,defaults    wait,logical
+/dev/block/by-name/odm          /odm           ext4    ro,defaults    wait,logical
+/dev/block/by-name/mi_ext       /mi_ext        ext4    ro,defaults    wait,logical
+/dev/block/by-name/mi_product   /mi_product    ext4    ro,defaults    wait,logical
+
+# 用户数据
+/dev/block/by-name/userdata     /data    f2fs    /dev/block/by-name/metadata    wait,check,encryptable=footer,quota,reservedsize=128M
+/dev/block/by-name/cache        /cache   ext4    defaults    wait,check
