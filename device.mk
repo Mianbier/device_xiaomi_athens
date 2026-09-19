@@ -117,13 +117,32 @@ PRODUCT_COPY_FILES += \
 
 # -----------------------------------------------------------------------------
 # 触摸固件 (从原厂 odm.img 提取)
+#
 #   focaltech_touch_3685g.ko 自带的 fallback 固件 THP 帧布局与 athens 面板不符,
 #   必须用原厂这份 148220 字节的固件。
-#   同时放 /odm/firmware 与 /vendor/firmware:
-#   TWRP 挂载真实 odm/vendor 分区后会盖掉 ramdisk 副本, 未挂载时用副本兜底。
+#
+#   ⚠️ 只能放 vendor/firmware, 不能放 odm/firmware !
+#      原因: 通用 ramdisk 根目录 ($OUT/root) 里 odm/ 是一个真实目录, 里面全是
+#      指向 /system/odm/* 的符号链接, 其中就有:
+#          odm/firmware -> /system/odm/firmware     (20 字节符号链接)
+#      而 PRODUCT_COPY_FILES 会在 $OUT/recovery/root/odm/firmware/ 建一个
+#      *真实非空目录*。构建 recovery ramdisk 时的第一步是
+#          rsync -a $OUT/root $OUT/recovery
+#      rsync 要把这个符号链接写回去, 却发现目标是个非空目录, 于是:
+#          could not make way for new symlink: root/odm/firmware
+#          cannot delete non-empty directory: root/odm/firmware
+#          rsync error: ... (code 23)
+#          ninja: build stopped: subcommand failed.     <- 第 6 版卡在 99% 就是这个
+#
+#      而 $OUT/root/vendor/ 下只有 etc/, 不存在 vendor/firmware 条目,
+#      所以新增 vendor/firmware/ 是纯增量, 不会和 rsync 打架。
+#      同平台已验证的 songyuan 设备树也是只放 vendor/firmware 单一路径。
+#
+#   运行时查找顺序见 recovery/root/system/bin/athens-touch-fw-load.sh:
+#       /odm/firmware  ->  /vendor/firmware  ->  /odm/etc/firmware
+#   前两个在挂载真实分区时才存在, 未挂载时由本副本兜底。
 # -----------------------------------------------------------------------------
 PRODUCT_COPY_FILES += \
-    $(DEVICE_PATH)/prebuilt/odm/firmware/focaltech_ts_fw_athens.bin:recovery/root/odm/firmware/focaltech_ts_fw_athens.bin \
     $(DEVICE_PATH)/prebuilt/odm/firmware/focaltech_ts_fw_athens.bin:recovery/root/vendor/firmware/focaltech_ts_fw_athens.bin
 
 # --- A/B OTA 分区列表 ---
