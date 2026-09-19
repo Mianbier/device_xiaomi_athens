@@ -14,8 +14,23 @@ $(call inherit-product, $(SRC_TARGET_DIR)/product/core_64_bit_only.mk)
 # 无 sdcardfs 的模拟存储 (支持 project quota / casefolding)
 $(call inherit-product, $(SRC_TARGET_DIR)/product/emulated_storage.mk)
 
-# 把 GSI 公钥装进 ramdisk (验证启动用)
+# 把 GSI 公钥装进 ramdisk (用验证启动引导 GSI 时用)
+#
+# ⚠ 这个文件名跨 AOSP 版本变过:
+#     AOSP 12  -> build/make/target/product/gsi_keys.mk          (内容: 加
+#                 q-gsi/r-gsi/s-gsi.avbpubkey 三个公钥到 first-stage ramdisk)
+#     AOSP 13+ -> 已删除, 改叫 build/make/target/product/developer_gsi_keys.mk
+#   写死 gsi_keys.mk 的话, fox_14.1 上会在产品配置阶段直接报:
+#     device/xiaomi/athens/device.mk:18: error: build/make/target/product/gsi_keys.mk does not exist..
+#     dumpvars failed with: exit status 1
+#     ** Don't have a product spec for: 'twrp_athens'
+#
+#   这里用 wildcard 守卫自适应: 有就继承, 没有就跳过。
+#   它只影响"用验证启动引导 GSI", 与 recovery 镜像无关, 跳过无任何副作用
+#   (recovery 不做 GSI verified boot)。
+ifneq ($(wildcard $(SRC_TARGET_DIR)/product/gsi_keys.mk),)
 $(call inherit-product, $(SRC_TARGET_DIR)/product/gsi_keys.mk)
+endif
 
 # --- 平台 ---
 QCOM_BOARD_PLATFORMS += canoe
