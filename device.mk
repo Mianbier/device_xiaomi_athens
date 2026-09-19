@@ -97,6 +97,35 @@ PRODUCT_PROPERTY_OVERRIDES += \
 PRODUCT_PROPERTY_OVERRIDES += \
     ro.treble.enabled=true
 
+# =============================================================================
+# recovery/root 叠加层  ★ 关键 ★
+#
+#   OrangeFox / TWRP 的标准机制: 用 find-copy-subdir-files 把
+#   $(DEVICE_PATH)/recovery/root 整个目录映射进 recovery ramdisk 的根 /。
+#
+#   ⚠️ 这一行之前是缺失的 —— 所以 recovery/root 下的文件（设备专属 init 层、
+#      触摸固件加载脚本）根本不会进镜像。参考同平台已验证的设备树
+#      songyuan / myron / annibale / nezha 的 device.mk 都有这一行。
+#
+#   本目录当前内容:
+#     init.recovery.qcom.rc                 <- init.rc 里 import 的就是它
+#     init.recovery.usb.rc                  <- configfs USB gadget (adb/MTP/fastboot)
+#     system/bin/athens-touch-fw-load.sh    <- 加载原厂 FT3685G 触摸固件
+# =============================================================================
+PRODUCT_COPY_FILES += \
+    $(call find-copy-subdir-files,*,$(DEVICE_PATH)/recovery/root,recovery/root)
+
+# -----------------------------------------------------------------------------
+# 触摸固件 (从原厂 odm.img 提取)
+#   focaltech_touch_3685g.ko 自带的 fallback 固件 THP 帧布局与 athens 面板不符,
+#   必须用原厂这份 148220 字节的固件。
+#   同时放 /odm/firmware 与 /vendor/firmware:
+#   TWRP 挂载真实 odm/vendor 分区后会盖掉 ramdisk 副本, 未挂载时用副本兜底。
+# -----------------------------------------------------------------------------
+PRODUCT_COPY_FILES += \
+    $(DEVICE_PATH)/prebuilt/odm/firmware/focaltech_ts_fw_athens.bin:recovery/root/odm/firmware/focaltech_ts_fw_athens.bin \
+    $(DEVICE_PATH)/prebuilt/odm/firmware/focaltech_ts_fw_athens.bin:recovery/root/vendor/firmware/focaltech_ts_fw_athens.bin
+
 # --- A/B OTA 分区列表 ---
 PRODUCT_PROPERTY_OVERRIDES += \
     ro.product.ab_ota_partitions=boot,init_boot,vendor_boot,recovery,dtbo,system,system_ext,product,vendor,vendor_dlkm,system_dlkm,odm,mi_ext

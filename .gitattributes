@@ -11,5 +11,11 @@
 
 # 二进制资源，绝不能做行尾转换
 prebuilt/*      binary
+prebuilt/**     binary
 *.img           binary
 *.ko            binary
+*.bin           binary
+
+# recovery/root 下的 init rc 与 shell 脚本必须是 LF
+recovery/root/init.recovery.*.rc   text eol=lf
+recovery/root/system/bin/*         text eol=lf

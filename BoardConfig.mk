@@ -165,7 +165,9 @@ TARGET_RECOVERY_PIXEL_FORMAT := "RGBX_8888"
 TW_THEME := portrait_hdpi
 TW_FRAMERATE := 120
 TW_NO_SCREEN_BLANK := true
-TW_SCREEN_BLANK_ON_BOOT := true
+# 注: 不设 TW_SCREEN_BLANK_ON_BOOT。
+#     它与 TW_NO_SCREEN_BLANK 语义冲突, 而且开机就把屏幕熄灭, 在触摸还没
+#     调好的阶段会直接表现为"全黑 = 像是没启动"。先保证屏幕常亮。
 
 TW_BRIGHTNESS_PATH := "/sys/class/backlight/panel0-backlight/brightness"
 TW_MAX_BRIGHTNESS := 16383
@@ -185,7 +187,25 @@ TW_INCLUDE_LIBRESETPROP := true
 TW_INCLUDE_7ZA := true
 TW_INCLUDE_LPTOOLS := true
 TW_EXCLUDE_APEX := true
+# -----------------------------------------------------------------------------
+# TW_EXCLUDE_DEFAULT_USB_INIT := true  —— 必须为 true, 但不是"什么都不做"
+#
+#   橙狐自带的 bootable/recovery/etc/init.recovery.usb.rc 用的是**老式**
+#   /sys/class/android_usb/android0 接口 (f_functions / f_ffs / enable)。
+#   SM8850 的 UDC 只支持 configfs, 那套节点根本不存在, 所以默认那份在本机
+#   是无效的, 必须排除。
+#
+#   ⚠️ 排除之后**必须**由设备树自己补一份 configfs 版本的:
+#       recovery/root/init.recovery.usb.rc
+#   两者都缺的话 (本设备树修复前的情况), init.rc 里
+#       import /init.recovery.usb.rc
+#   找不到文件, recovery 下 adb / MTP / fastbootd 会全部不通。
+# -----------------------------------------------------------------------------
 TW_EXCLUDE_DEFAULT_USB_INIT := true
+TARGET_RECOVERY_USB_RC := $(DEVICE_PATH)/recovery/root/init.recovery.usb.rc
+# 用户态 fastboot (fastbootd) —— 与 recovery/root/init.recovery.usb.rc 里的
+# sys.usb.config=fastboot 规则配套
+TW_INCLUDE_FASTBOOTD := true
 TW_USE_TOOLBOX := true
 TW_USE_SERIALNO_PROPERTY_FOR_DEVICE_ID := true
 TW_OVERRIDE_SYSTEM_PROPS := "ro.build.fingerprint=ro.vendor.build.fingerprint;ro.build.version.incremental"

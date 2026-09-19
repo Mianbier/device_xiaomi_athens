@@ -1,0 +1,94 @@
+# =============================================================================
+# init.recovery.qcom.rc — Xiaomi athens (Redmi K100 Pro) / Canoe / SM8850
+#                          Android 16 / HyperOS 4.0
+#
+# 加载方式: recovery 的 init.rc 里有
+#               import /init.recovery.${ro.hardware}.rc
+#           ro.hardware = qcom, 所以这个文件会被自动 import。
+#
+# -----------------------------------------------------------------------------
+# 为什么必须要有它 (本设备树修复前的致命缺口)
+# -----------------------------------------------------------------------------
+# 修复前, recovery ramdisk 里既没有 init.recovery.qcom.rc, 也没有
+# init.recovery.usb.rc。init.rc 里那两行 import 全部落空, 直接导致:
+#
+#   1) 没有 /dev/block/bootdevice 符号链接
+#      而本设备树的 recovery.fstab 里所有物理分区都写成
+#          /dev/block/bootdevice/by-name/userdata
+#          /dev/block/bootdevice/by-name/metadata
+#          /dev/block/bootdevice/by-name/persist
+#          /dev/block/bootdevice/by-name/boot|recovery|misc|...
+#      → TWRP 启动时一个物理分区都定位不到, 表现为"卡在启动画面 / 像没启动"。
+#      该链接正是原厂 recovery 的这个文件里用 symlink 建出来的。
+#
+#   2) 没有 sys.usb.controller, 也没有把 DWC3 切到 peripheral
+#      → configfs gadget 无法 bind UDC → recovery 下 adb / MTP / fastbootd
+#        全部不通。
+#
+# 原厂 recovery.img 的 ramdisk 里就有这个文件 (2175 字节), 内容见下方
+# "原厂等价实现" 注释。本文件在保留原厂全部动作的基础上, 补上了
+# USB 控制器属性设置与触摸固件加载钩子。
+# =============================================================================
+
+# --- 触摸固件加载 (configfs USB gadget) 由 usb.rc 负责 ---
+import /init.recovery.usb.rc
+
+# -----------------------------------------------------------------------------
+# 原厂等价实现 1: 开机先把面板背光点亮
+#   原厂 init.recovery.qcom.rc:
+#       on init
+#           write /sys/class/backlight/panel0-backlight/brightness 200
+#           setprop sys.usb.configfs 1
+#   背光若一直是 0, 屏幕全黑, 用户会以为"recovery 根本没启动"。
+#   sys.usb.configfs 交给 usb.rc 在 early-fs/fs 阶段设置, 这里不重复。
+# -----------------------------------------------------------------------------
+on init
+    write /sys/class/backlight/panel0-backlight/brightness 200
+
+# -----------------------------------------------------------------------------
+# 原厂等价实现 2: 建立 /dev/block/bootdevice 与 qseecom 权限
+# -----------------------------------------------------------------------------
+on fs
+    wait /dev/block/platform/soc/${ro.boot.bootdevice}
+    symlink /dev/block/platform/soc/${ro.boot.bootdevice} /dev/block/bootdevice
+    wait /dev/block/bootdevice
+
+    chmod 0660 /dev/qseecom
+    chown system drmrpc /dev/qseecom
+
+    # TWRP 追踪的 Persist 路径 + QTI 安全栈需要的 vendor bind 目标
+    mkdir /persist 0775 shell system
+    mkdir /mnt/vendor 0775 shell system
+    mkdir /mnt/vendor/persist 0775 shell system
+
+    # modem 固件挂载点 (TA / eSE 相关)
+    mkdir /vendor/firmware_mnt 0755 root root
+    mkdir /firmware 0755 root root
+
+# -----------------------------------------------------------------------------
+# USB 控制器: 从 bootloader 传下来的 ro.boot.usbcontroller 得到 UDC 名
+#   (init.recovery.usb.rc 里的 gadget 靠 ${sys.usb.controller} bind UDC)
+# -----------------------------------------------------------------------------
+on property:ro.boot.usbcontroller=*
+    setprop sys.usb.controller ${ro.boot.usbcontroller}
+
+# -----------------------------------------------------------------------------
+# 内核模块全部加载完成 (TWRP 会置 twrp.modules.loaded=true) 之后再拉触摸固件。
+#   focaltech_touch_3685g.ko 自带一份 fallback 固件, 但 THP 帧格式与
+#   athens 面板不匹配, 表现为触摸乱跳 / 完全无响应。
+#   这里加载 ODM 里的原厂固件 focaltech_ts_fw_athens.bin (148220 字节),
+#   并把驱动切回普通坐标上报模式。
+# -----------------------------------------------------------------------------
+on property:twrp.modules.loaded=true
+    setprop vendor.touch.recovery.firmware_ready 0
+    chmod 0755 /system/bin/athens-touch-fw-load.sh
+    start athens-touch-fw-load
+
+# 注意: 这里用 /system/bin/sh 显式解释脚本, 不依赖文件的可执行位 ——
+#       Windows 上 git 可能把 mode 记成 100644, 到 CI 上就没有 +x 了。
+service athens-touch-fw-load /system/bin/sh /system/bin/athens-touch-fw-load.sh
+    disabled
+    oneshot
+    user root
+    group root system input
+    seclabel u:r:recovery:s0
