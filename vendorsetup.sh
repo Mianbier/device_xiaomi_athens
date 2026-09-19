@@ -85,5 +85,56 @@ if [ "$1" = "$FDEVICE" -o "$FOX_BUILD_DEVICE" = "$FDEVICE" ]; then
         echo "[athens] !! 警告: 找不到补丁脚本或源码树根 ($ATHENS_TOP), 跳过 keystore2 等待补丁"
     fi
 
+    # =========================================================================
+    # ★ 关键修复 2: Android 13+ 的 lunch 必须是三段式 <product>-<release>-<variant>
+    # -------------------------------------------------------------------------
+    # AOSP 13 起 build/make/envsetup.sh 的 lunch() 强制要求三段:
+    #     # This must be <product>-<release>-<variant>
+    #     IFS="-" read -r product release variant <<< "$selection"
+    #     if [[ -z "$product" ]] || [[ -z "$release" ]] || [[ -z "$variant" ]]; then
+    #         echo "Invalid lunch combo: $selection"
+    #         echo "Valid combos must be of the form <product>-<release>-<variant>"
+    #
+    # 而构建器 workflow 里那行是固定的两段:  lunch twrp_<device>-eng
+    #   -> fox_14.1 (Android 14) 上必挂, 12.1 (Android 12) 上没问题。
+    #
+    # 修法: 本文件是在 envsetup.sh 末尾才被 source 的
+    #   (envsetup.sh:764 定义 lunch, :2019 才 source 各 vendorsetup.sh)
+    # 所以此刻 lunch 已经存在, 可以包一层, 自动把 release 段补出来。
+    #
+    # release 名不写死, 直接从源码树读 —— 换 Android 版本能自适应:
+    #   build/release/release_config_map.mk 里 declare-release-config <name>, ...
+    #     Android 14.0.0_r67 -> ap2a   (AOSP 14 只有一个 release: 24Q2 aka AP2A)
+    #     Android 16         -> bp2a   (与 myron 参考树的 lunch 一致)
+    # 该文件在 Android 12 及以下不存在 -> 干脆不装兼容层, 对 12.1/11.0 零影响。
+    # =========================================================================
+    ATHENS_TARGET_RELEASE=""
+    if [ -n "$ATHENS_TOP" ] && [ -f "$ATHENS_TOP/build/release/release_config_map.mk" ]; then
+        ATHENS_TARGET_RELEASE=$(sed -n \
+            's/.*declare-release-config,[[:space:]]*\([A-Za-z0-9_]*\).*/\1/p' \
+            "$ATHENS_TOP/build/release/release_config_map.mk" | head -1)
+    fi
+
+    if [ -n "$ATHENS_TARGET_RELEASE" ] && declare -f lunch >/dev/null 2>&1; then
+        # 把原来的 lunch 改名保存成 athens_orig_lunch
+        eval "$(declare -f lunch | sed '1s/^lunch/athens_orig_lunch/')"
+        lunch() {
+            if [ $# -eq 0 ]; then
+                athens_orig_lunch
+                return $?
+            fi
+            local _a="$1"
+            case "$_a" in
+                *-*-*) : ;;                                                  # 已经是三段, 不动
+                *-*)   _a="${_a%-*}-${ATHENS_TARGET_RELEASE}-${_a##*-}" ;;    # twrp_athens-eng -> twrp_athens-<rel>-eng
+            esac
+            if [ "$_a" != "$1" ]; then
+                echo "[athens] lunch 自动补段: $1  ->  $_a"
+            fi
+            athens_orig_lunch "$_a"
+        }
+        echo "[athens] lunch 兼容层已安装 (TARGET_RELEASE=$ATHENS_TARGET_RELEASE)"
+    fi
+
     echo "[athens] vendorsetup.sh applied (FOX_BUILD_DEVICE=$FOX_BUILD_DEVICE)"
 fi
