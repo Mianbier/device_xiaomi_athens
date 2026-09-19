@@ -16,6 +16,28 @@
 DEVICE_PATH := device/xiaomi/athens
 TARGET_RECOVERY_FSTAB := $(DEVICE_PATH)/recovery.fstab
 
+# =============================================================================
+# ★ 构建期源码补丁 (双保险之一; 另一处在 vendorsetup.sh)
+#
+#   故障: recovery 刷入后能看到橙狐 splash, 但界面永远停在那里, 完全点不动。
+#   根因: system/vold 里包装 keystore2 的那个类, 构造函数用的是
+#             AServiceManager_waitForService("android.system.keystore2.IKeystoreService/default")
+#         注意是 waitForService, 那是 **无限阻塞** 的。而 recovery ramdisk 里
+#         没有 KeyMint HAL, keystore2 每 5 秒崩溃重启一次, 永远注册不上这个服务,
+#         于是 recovery 主线程永久挂死在 futex_wait。
+#         调用链: Decrypt_Page -> Decrypt_Device -> Decrypt_DE()
+#                 -> fscrypt_initialize_systemwide_keys() -> retrieveKey()
+#                 -> KeyStorage.cpp: Keystore/Keymaster 构造函数 -> ★阻塞★
+#
+#   修法: 解析本文件时就把源码改成 "checkService + 最多 15 秒重试"。
+#         这两个类都有 operator bool(), 而每个构造点后面都紧跟
+#         "if (!keystore) return false;" 守卫, 所以拿不到服务只会解密失败, 不会卡死。
+#
+#   脚本是幂等的(已打过就跳过, 不碰 mtime); 找不到源码树也安静退出, 绝不让构建失败。
+#   完整分析见 device/xiaomi/athens/patch_keystore2_wait.py 文件头。
+# =============================================================================
+$(shell ATHENS_TOP="$$PWD" python3 $(DEVICE_PATH)/patch_keystore2_wait.py 1>&2)
+
 # --- 放宽源码树的严格检查 (GKI / Android16 设备必需) ---
 ALLOW_MISSING_DEPENDENCIES := true
 BUILD_BROKEN_DUP_RULES := true
