@@ -195,9 +195,33 @@ BOOT_SECURITY_PATCH := $(PLATFORM_SECURITY_PATCH)
 # =========================================================
 TARGET_SCREEN_WIDTH := 1156
 TARGET_SCREEN_HEIGHT := 2510
-# 注: TARGET_SCREEN_DENSITY 在橙狐 14.1 的 bootable/recovery 里**全树 0 命中**
-#     (没有任何构建文件读它)。保留只是因为同平台 4/4 机型都这么写, 属于无害惯例。
-TARGET_SCREEN_DENSITY := 480
+# -----------------------------------------------------------------------------
+# ⚠️ 绝对不要设 TARGET_SCREEN_DENSITY ！
+#
+#   R9 那一版两个构建 (14.1 run 35479116109 / 12.1 run 35479575426) 都在 98%
+#   挂在同一步, 报错:
+#
+#       FAILED: out/target/product/athens/vendor/build.prop
+#       error: found duplicate sysprop assignments:
+#       ro.sf.lcd_density=480
+#       ro.sf.lcd_density=560
+#
+#   原因: TARGET_SCREEN_DENSITY 是 **AOSP build/make 层**的变量, 会被写进
+#         ADDITIONAL_VENDOR_PROPERTIES 生成 ro.sf.lcd_density;
+#         而 device.mk:109 已经用 PRODUCT_PROPERTY_OVERRIDES 设了
+#         ro.sf.lcd_density=560。
+#         同一个属性被赋值两次 -> post_process_props 直接判死。
+#         (注意: 即使两边值相同也会报, 它检查的是属性名重复)
+#
+#   教训: 同平台参考机型 (myron/annibale/nezha/songyuan) 写了
+#         TARGET_SCREEN_DENSITY := 480, 是因为它们的 device.mk **没有**再设
+#         ro.sf.lcd_density。我们有了, 就不能再写 —— 照抄参考树前必须先
+#         确认自己没有等价设置。
+#
+#   验真方法也要修正: TARGET_SCREEN_DENSITY 这类 AOSP 变量**不在**
+#   bootable/recovery 里接线, 只 grep recovery 树会得出"没接线"的错误结论。
+# -----------------------------------------------------------------------------
+# TARGET_SCREEN_DENSITY := 480
 TARGET_RECOVERY_PIXEL_FORMAT := "RGBX_8888"
 TW_THEME := portrait_hdpi
 TW_NO_SCREEN_BLANK := true
