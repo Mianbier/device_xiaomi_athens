@@ -251,21 +251,29 @@ TW_NO_SCREEN_BLANK := true
 TW_SCREEN_BLANK_ON_BOOT := true
 
 # -----------------------------------------------------------------------------
-# TW_NO_SCREEN_TIMEOUT := true  —— 【本次 bring-up 临时保险，触摸确认后删掉】
+# ⚠️ TW_NO_SCREEN_TIMEOUT **绝对不能开** —— 开过一次，直接把人卡死在锁屏
 #
-#   这个开关**是接了线的**: Android.mk:252 `ifneq ($(TW_NO_SCREEN_TIMEOUT),)`
-#   -> `-DTW_NO_SCREEN_TIMEOUT`。定义后 gui/blanktimer.cpp 的
-#   checkForTimeout() 整个函数体被编译掉, 屏幕永不自动熄灭。
+#   看 gui/blanktimer.cpp：这个宏同时保护 **两个** 函数
 #
-#   为什么要临时开:
-#       14.1 上一版触摸完全不能用, 而屏幕超时会把背光写 0 —— 于是屏幕变黑
-#       且唤不醒 (processInput 里 KEY_POWER 被显式排除在 unblank 之外,
-#       只有音量键能唤醒), 用户无法判断 recovery 到底起没起来。
-#       这是已经发生过两次的失败模式。
+#       checkForTimeout()        —— 屏幕超时 -> 变暗 -> 熄屏 -> 弹锁屏
+#       resetTimerAndUnblank()   —— ★ 解锁 / 熄屏恢复 ★
 #
-#   触摸确认可用后, 把这一行删掉即可恢复正常息屏。
+#   也就是说：开了它虽然"屏幕不会超时"，但**解锁路径也一起被编译没了**。
+#   而锁屏还会被电源键触发：
+#       gui/gui.cpp:453  POWER key -> blankTimer.toggleBlank()
+#                       -> blank() + PageManager::ChangeOverlay("lock")
+#       （toggleBlank **不受** TW_NO_SCREEN_TIMEOUT 保护）
+#
+#   => 一旦锁屏弹出，就再也退不出来，用户被永久卡在锁屏界面。
+#      实测正是这个现象："在锁屏界面还是点不动"。
+#
+#   正确做法：不开这个宏，改用 OF_USE_LOCKSCREEN_BUTTON=1 给锁屏加
+#   **可点击**的解锁按钮（本机拖拽手势坏，点击是好的）。
+#   代价只是屏幕会正常超时，但至少能解锁进来。
+#   注意 Android.mk 里是 `ifneq ($(TW_NO_SCREEN_TIMEOUT),)` ——
+#   **只要非空就会定义**，所以必须是「整行不存在」或 `:= `（空），
+#   写成 `:= false` 照样会开！这里直接不写。
 # -----------------------------------------------------------------------------
-TW_NO_SCREEN_TIMEOUT := true
 
 # -----------------------------------------------------------------------------
 # TW_FRAMERATE := 120  —— 不要写, 在 OrangeFox 14.1 里它是死配置
