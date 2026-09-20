@@ -38,6 +38,25 @@ TARGET_RECOVERY_FSTAB := $(DEVICE_PATH)/recovery.fstab
 # =============================================================================
 $(shell ATHENS_TOP="$$PWD" python3 $(DEVICE_PATH)/patch_keystore2_wait.py 1>&2)
 
+# =============================================================================
+# 构建期补丁 2：屏幕超时默认 60 秒 -> 0（永不超时），同时保留解锁路径
+#
+#   背景（实测踩过）：
+#     TW_NO_SCREEN_TIMEOUT 同时保护 checkForTimeout() 和 **resetTimerAndUnblank()
+#     (解锁)** —— 用它"避免超时"会把解锁一起编译没，锁屏弹出后**永久卡死**。
+#     而不用它时，源码 ifndef 分支每次开机都把 mPersist 强制写回 60 秒，
+#     用户在设置里改"永不"也会被覆盖，等于改不了。
+#
+#   解法：把那一行改成 "0"，且不定义 TW_NO_SCREEN_TIMEOUT：
+#     * sleepTimer=0 -> `if (sleepTimer && diff > sleepTimer)` 恒假 -> 永不超时
+#     * 宏未定义 -> resetTimerAndUnblank() 保留 -> **能解锁**
+#   两个好处同时拿到。
+#
+#   脚本幂等；找不到源码树/目标行就安静退出，绝不让构建失败。
+#   完整分析见 device/xiaomi/athens/patch_screen_timeout.py 文件头。
+# =============================================================================
+$(shell ATHENS_TOP="$$PWD" python3 $(DEVICE_PATH)/patch_screen_timeout.py 1>&2)
+
 # --- 放宽源码树的严格检查 (GKI / Android16 设备必需) ---
 ALLOW_MISSING_DEPENDENCIES := true
 BUILD_BROKEN_DUP_RULES := true
