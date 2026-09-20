@@ -178,22 +178,60 @@ VENDOR_SECURITY_PATCH := $(PLATFORM_SECURITY_PATCH)
 BOOT_SECURITY_PATCH := $(PLATFORM_SECURITY_PATCH)
 
 # =========================================================
-# 屏幕 (原厂 dtbo 实测: nt37801 amoled cmd mode dsi csot panel with DSC)
-#   1440 x 3200 @ 120Hz
+# 屏幕
+#
+#   真实分辨率 1156 x 2510 @ 120Hz (cmd mode + DSC)
+#     证据 1: /sys/class/drm/card0-DSI-1/modes -> "1156x2510x120cmd"
+#     证据 2: 触摸 IC ABS_MT_POSITION_X/Y max = 115599 / 250999 (x100)
+#     证据 3: recovery.log -> "width: 1156, height: 2510" (DRM mode hdisplay/vdisplay)
+#
+#   ⚠️ 之前写的 1440 x 3200 是错的。
+#      TARGET_SCREEN_WIDTH/HEIGHT 只被 gui/libguitwrp_defaults.go 用来
+#      "自动挑主题", 我们显式设了 TW_THEME, 所以它被绕过 —— 但为了
+#      和同平台机型一致、也为了将来不被别的逻辑读到, 必须写真实值。
+#
+#   同平台 (SM8850/canoe) 四个机型 (myron/annibale/nezha/songyuan)
+#   全部写成各自面板的真实分辨率 + TARGET_SCREEN_DENSITY := 480。
 # =========================================================
-TARGET_SCREEN_WIDTH := 1440
-TARGET_SCREEN_HEIGHT := 3200
+TARGET_SCREEN_WIDTH := 1156
+TARGET_SCREEN_HEIGHT := 2510
+TARGET_SCREEN_DENSITY := 480
 TARGET_RECOVERY_PIXEL_FORMAT := "RGBX_8888"
 TW_THEME := portrait_hdpi
-TW_FRAMERATE := 120
 TW_NO_SCREEN_BLANK := true
-# 注: 不设 TW_SCREEN_BLANK_ON_BOOT。
-#     它与 TW_NO_SCREEN_BLANK 语义冲突, 而且开机就把屏幕熄灭, 在触摸还没
-#     调好的阶段会直接表现为"全黑 = 像是没启动"。先保证屏幕常亮。
+
+# -----------------------------------------------------------------------------
+# TW_SCREEN_BLANK_ON_BOOT := true  —— 同平台 4/4 机型都开, 我们也开
+#
+#   gui/gui.cpp:895 里它做的是:
+#       blankTimer.blank();  blankTimer.resetTimerAndUnblank();
+#   即"立刻灭一次再立刻点亮"。这是这几块 QCOM cmd-mode 面板的开机初始化
+#   怪癖补偿 (面板从上电到能正常出图之间需要一次 blank/unblank 往返)。
+#
+#   因为我们已经开了 TW_NO_SCREEN_BLANK, blank() 不会走 gr_fb_blank(),
+#   只把背光写 0 然后马上恢复, 不存在"开机黑屏"的风险。
+#   之前这里注释掉的理由是"怕黑屏", 那是误解 —— 真正会造成黑屏的是
+#   屏幕超时 (blankTimer.checkForTimeout) 而触摸又不能用, 唤不醒。
+# -----------------------------------------------------------------------------
+TW_SCREEN_BLANK_ON_BOOT := true
+
+# -----------------------------------------------------------------------------
+# TW_FRAMERATE := 120  —— 不要写, 在 OrangeFox 14.1 里它是死配置
+#
+#   全树检索确认: TW_FRAMERATE 只出现在
+#       gui/objects.hpp:56-57   #ifndef TW_FRAMERATE / #define TW_FRAMERATE 30
+#       gui/gui.cpp:645         1.0 / TW_FRAMERATE * 1000000000
+#       gui/animation.cpp:129
+#   没有任何 Android.mk / Android.bp / *.go (Soong 插件) 把它变成 CFLAG。
+#   所以实际生效值恒为 30 FPS, 写 120 只是让人误以为跑在 120Hz。
+# -----------------------------------------------------------------------------
+# TW_FRAMERATE := 120
 
 TW_BRIGHTNESS_PATH := "/sys/class/backlight/panel0-backlight/brightness"
 TW_MAX_BRIGHTNESS := 16383
-TW_DEFAULT_BRIGHTNESS := 8000
+# 同平台机型用 950 (约 6%); 8000 (约 49%) 在暗环境刺眼, 且 PWM 低亮度区间
+# 有些面板会闪。跟随同平台取 950。
+TW_DEFAULT_BRIGHTNESS := 950
 TW_CUSTOM_CPU_TEMP_PATH := "/sys/class/thermal/thermal_zone75/temp"
 
 # =========================================================
@@ -236,18 +274,50 @@ TARGET_RECOVERY_QCOM_RTC_FIX := true
 RECOVERY_SDCARD_ON_DATA := true
 
 # =========================================================
-# 输入 / 触摸  (原厂触摸 IC = FocalTech FT3685G, 驱动在 vendor_dlkm)
-#   与同平台 SM8850/canoe 的 myron(K90 Pro Max) / songyuan(K100 Pro Max)
-#   已验证配置对齐。
-# =========================================================
-TW_CUSTOM_TOUCH_DEVICE := "/dev/input/event7"
-# uinput-xiaomi 是小米的虚拟输入设备, 会被 TWRP 误判为触摸屏 -> 必须排除
-TW_INPUT_BLACKLIST := "hbtp_vm:uinput-xiaomi"
+# 输入 / 触摸
+#   触摸 IC = FocalTech FT3685G (spi19.0), 驱动 focaltech_touch_3685g.ko
+#   + xiaomi_touch.ko, 都在 vendor_dlkm。
+#
+# -----------------------------------------------------------------------------
+# ⚠️ 下面两个开关在 OrangeFox 14.1 里**根本没有接线**, 写了也不生效:
+#
+#   TW_CUSTOM_TOUCH_DEVICE
+#       全树 grep 零命中 —— 这个变量在 bootable/recovery 里不存在。
+#
+#   TW_INPUT_BLACKLIST
+#       minuitwrp/events.cpp:241 有 #ifdef TW_INPUT_BLACKLIST 分支,
+#       但没有任何 Android.mk / Android.bp / Soong 插件 (*.go) 会定义它。
+#       编译时走的永远是 #ifndef 那一路, 只硬编码屏蔽 bma250 / bma150。
+#       (minuitwrp/libminuitwrp_defaults.go 只处理像素格式、旋转、
+#        TW_TARGET_USES_QCOM_BSP、TW_HAPTICS_TSPDRV、haptics shared_libs,
+#        没有 BLACKLIST。)
+#
+#       另外就算将来接上了, 分隔符也必须是 \x0a 而不是 ':' ——
+#       events.cpp:249 是 strtok(bl, "\n")。
+#
+#   结论: 排除 uinput-xiaomi 不能靠这个开关。真正要做的是
+#         "让 FocalTech 保持普通坐标上报模式", 见
+#         recovery/root/init.recovery.qcom.rc 里的 touch-raw-guard 服务。
+# -----------------------------------------------------------------------------
+# TW_CUSTOM_TOUCH_DEVICE := "/dev/input/event7"
+# TW_INPUT_BLACKLIST := "hbtp_vm\x0auinput-xiaomi"
 
 # 振动
-TW_SUPPORT_INPUT_AIDL_HAPTICS := true
-TW_SUPPORT_INPUT_AIDL_HAPTICS_FIX_OFF := true
-TW_SUPPORT_INPUT_AIDL_HAPTICS_FQNAME := "IVibrator/vibratorfeature"
+#
+#   同平台 4/4 机型 (myron/annibale/nezha/songyuan) 都把这三行**注释掉**。
+#   原因 (myron 的 init.recovery.qcom.rc 原话):
+#       "Recovery drives qcom-hv-haptics directly through input
+#        force-feedback.  Do not start Xiaomi AIDL vibrator HAL; it can
+#        mask direct haptics fallback."
+#   而且 libminuitwrp_defaults.go:176 只在 TW_SUPPORT_INPUT_AIDL_HAPTICS
+#   为 true 时往 libminuitwrp 里挂 android.hardware.vibrator-V2-ndk/-cpp
+#   两个 shared_lib, 并不会定义 -DUSE_QTI_AIDL_HAPTICS (全树无此定义点),
+#   所以 events.cpp 里那段 AIDL 振动代码其实是死代码。
+#   recovery 直接走 qcom-hv-haptics 的 input FF 通道即可。
+# -------------------------------------------------------------
+# TW_SUPPORT_INPUT_AIDL_HAPTICS := true
+# TW_SUPPORT_INPUT_AIDL_HAPTICS_FIX_OFF := true
+# TW_SUPPORT_INPUT_AIDL_HAPTICS_FQNAME := "IVibrator/vibratorfeature"
 TW_NO_HAPTICS := false
 
 # =========================================================
