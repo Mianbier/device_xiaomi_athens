@@ -53,6 +53,12 @@ on fs
     symlink /dev/block/platform/soc/${ro.boot.bootdevice} /dev/block/bootdevice
     wait /dev/block/bootdevice
 
+    # 让 kernel 的 firmware loader 允许走 sysfs fallback 路径。
+    #   myron / songyuan (同平台已验证) 的 init.recovery.qcom.rc 都有这一行。
+    #   缺了它, focaltech 驱动 probe 时找不到 /vendor/firmware 下的固件,
+    #   会退回模块内置的 fallback 固件 (THP 帧布局与 athens 面板不匹配)。
+    write /proc/sys/kernel/firmware_config/force_sysfs_fallback 1
+
     chmod 0660 /dev/qseecom
     chown system drmrpc /dev/qseecom
 
@@ -84,6 +90,42 @@ on property:twrp.modules.loaded=true
     chmod 0755 /system/bin/athens-touch-fw-load.sh
     start athens-touch-fw-load
 
+    # -------------------------------------------------------------------------
+    # ★★★ 14.1 "完全没有触控" 的真正修复 ★★★
+    #
+    #   现象 (14.1 实机 dmesg):
+    #       [FTS_TS_I][fts_irq_read_report:2286]: unknown touch event(5)
+    #       ... 6136 条 / 17 秒 / 约 360Hz, 无人触碰也一直在刷
+    #   含义: 触摸 IC 处于 RAW / THP 原始数据流上报模式 —— 没人碰屏幕它也在
+    #         持续推帧。驱动按普通触点格式去解析这些帧, 得到 "unknown touch
+    #         event(5)", 一个有效触点都产生不出来, 于是 /dev/input/event7
+    #         永远静默 (getevent 实测 0 事件) -> TWRP 完全没有触控。
+    #
+    #   为什么 athens-touch-fw-load.sh 里那次 `echo 0 > enable_touch_raw` 不够:
+    #       那个脚本是"先强制升级固件, 再写一次 raw=0"。而
+    #           echo "$FW_NAME" > /sys/bus/spi/devices/*/fts_force_upgrade
+    #       会让 IC 复位重新初始化, 复位后驱动/IC 会**再次回到 RAW 模式**,
+    #       把刚写进去的 0 冲掉。一次性写入赢不了这场竞态。
+    #       (而且脚本里 "touch_raw=0" 是硬编码在日志字符串里的, 掩盖了失败)
+    #
+    #   同平台可用机型 myron (K90 Pro Max / SM8850 canoe) 的做法:
+    #       service touch-raw-guard ... "while true; do
+    #           echo 0 > /sys/class/touch/touch_dev/enable_touch_raw
+    #           sleep 1; done"
+    #       常驻循环, 每秒把 raw 模式摁回 0。这里照搬。
+    #
+    #   注意路径: myron 用 /sys/class/touch/touch_dev/enable_touch_raw,
+    #             songyuan 用 /sys/devices/virtual/touch/touch_dev/enable_touch_raw。
+    #             两者是同一节点的不同符号链接, 守卫里两条都写。
+    # -------------------------------------------------------------------------
+    # 该服务定义成 class main + oneshot (与 myron 一致), 所以它会在
+    # class_start main 时自动拉起, 不依赖下面这行 start。
+    # 循环里每秒写一次、写失败也不报错, 因此节点晚出现也没关系。
+    # 这里**故意不加 `wait /sys/class/touch/...`**: 万一节点始终不出现,
+    # wait 会把整个 property trigger 卡死。
+    # -------------------------------------------------------------------------
+    start touch-raw-guard
+
 # 注意: 这里用 /system/bin/sh 显式解释脚本, 不依赖文件的可执行位 ——
 #       Windows 上 git 可能把 mode 记成 100644, 到 CI 上就没有 +x 了。
 service athens-touch-fw-load /system/bin/sh /system/bin/athens-touch-fw-load.sh
@@ -91,4 +133,21 @@ service athens-touch-fw-load /system/bin/sh /system/bin/athens-touch-fw-load.sh
     oneshot
     user root
     group root system input
+    seclabel u:r:recovery:s0
+
+# -----------------------------------------------------------------------------
+# touch-raw-guard —— 把 FocalTech 摁在"普通坐标上报"模式
+#
+#   enable_touch_raw=1 会让 IC 改推 RAW/THP 原始帧, 驱动解析不出触点,
+#   getevent 上什么都看不到, 表现就是"完全没有触控"。
+#   一次性写入会被固件强制升级后的 IC 复位冲掉, 所以必须常驻。
+#
+#   这是 myron (同平台已验证可用) 的原样实现。
+# -----------------------------------------------------------------------------
+service touch-raw-guard /system/bin/sh -c \
+    "while true; do echo 0 > /sys/class/touch/touch_dev/enable_touch_raw 2>/dev/null; echo 0 > /sys/devices/virtual/touch/touch_dev/enable_touch_raw 2>/dev/null; sleep 1; done"
+    class main
+    user root
+    group root system input
+    oneshot
     seclabel u:r:recovery:s0
