@@ -25,7 +25,10 @@ TOUCH_CLASS=/sys/class/touch
 TOUCH_ROOT=/sys/devices/virtual/touch
 TOUCH_NODE=$TOUCH_ROOT/touch_dev
 ABNORMAL_EVENT=$TOUCH_NODE/abnormal_event
-TOUCH_RAW=$TOUCH_NODE/enable_touch_raw
+# 注意: 这个节点有两条符号链接路径, myron 用 /sys/class/..., songyuan 用
+#       /sys/devices/virtual/...。两条都试, 谁在就用谁。
+TOUCH_RAW_A=/sys/class/touch/touch_dev/enable_touch_raw
+TOUCH_RAW_B=$TOUCH_ROOT/touch_dev/enable_touch_raw
 RLOG=/tmp/recovery.log
 
 rlog() {
@@ -112,9 +115,23 @@ while [ "$retry" -lt 20 ]; do
         echo "$old_fw_path" > "$FW_PATH_PARAM" 2>/dev/null || true
 
         if [ "$load_ok" = 1 ]; then
-            # 关掉 raw/THP 上报, 让 TWRP 能直接读到坐标事件
-            [ -w "$TOUCH_RAW" ] && echo 0 > "$TOUCH_RAW"
-            rlog "OK: $TOUCH_DEV ($devno) + $FW_DIR/$FW_NAME ($FW_SIZE bytes), touch_raw=0"
+            # 关掉 raw/THP 上报, 让 TWRP 能直接读到坐标事件。
+            #
+            # ⚠️ 这里只是"第一枪"。固件强制升级会让 IC 复位并**重新回到
+            #    RAW 模式**, 把这次写入冲掉 —— 所以真正的保障是
+            #    init.recovery.qcom.rc 里的 touch-raw-guard 常驻循环。
+            #
+            #    本脚本必须**回读校验**并把真实值写进日志: 旧版本把
+            #    "touch_raw=0" 硬编码在日志字符串里, 即使写入失败也照样
+            #    打印 0, 把真正的故障掩盖了整整两轮编译。
+            raw_written=-1
+            for raw in "$TOUCH_RAW_A" "$TOUCH_RAW_B"; do
+                [ -e "$raw" ] || continue
+                echo 0 > "$raw" 2>/dev/null
+                raw_written="$(cat "$raw" 2>/dev/null)"
+                break
+            done
+            rlog "OK: $TOUCH_DEV ($devno) + $FW_DIR/$FW_NAME ($FW_SIZE bytes), enable_touch_raw readback=$raw_written (want 0)"
             setprop vendor.touch.recovery.firmware_ready 1
             exit 0
         fi
