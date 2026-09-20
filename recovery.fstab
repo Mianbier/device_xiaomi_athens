@@ -1,76 +1,91 @@
 # =============================================================================
-# recovery.fstab (TWRP v2 格式)
-# Device: Xiaomi athens (Redmi K100 Pro) / Canoe / Android 16
+# recovery.fstab — Xiaomi athens (Redmi K100 Pro) / Canoe / SM8850 / Android 16
 #
-# 格式: <mount_point> <fs_type> <device> [device2] <flags>
+# ★★★ 这个文件必须是 AOSP fs_mgr 格式，不是 TWRP v2 格式！ ★★★
 #
-# 数据来源: 原厂 vendor_boot.img 内 first_stage_ramdisk/fstab.qcom (实测提取)
-#   - 动态分区 (logical, 位于 super): 全部 erofs
-#   - /data     : f2fs, fileencryption=aes-256-xts:aes-256-cts:v2+...
-#   - /metadata : f2fs  ← 注意: 本机是 f2fs, 不是 ext4
-#   - /persist  : ext4, 挂在 /mnt/vendor/persist
-#   - UFS 控制器: 1d84000.ufshc
+#   格式: <src>  <mnt_point>  <fs_type>  <mnt_flags>  <fs_mgr_flags>
+#
+# -----------------------------------------------------------------------------
+# 为什么必须是 AOSP 格式（这是 /data 解密失败的根本原因）
+# -----------------------------------------------------------------------------
+#   fs_mgr 在 **第一级 init (first stage)** 就读这个文件，把带
+#   `first_stage_mount` 的分区挂载起来。这一步必须发生在
+#   **第二级 init 解析 init.rc 之前**。
+#
+#   否则会发生什么（本项目实测到的完整故障链）:
+#     1) /vendor 没挂
+#     2) /vendor/etc/init/*.rc 从未被 import
+#     3) vendor HAL 服务 (KeyMint / Gatekeeper / Weaver) 根本没注册
+#        —— 它们都定义在 /vendor/etc/init/ 里
+#     4) recovery 的 init.rc 里的 `class_start hal` 启动了个空
+#     5) keystore2 绑不上 KeyMint -> SIGSEGV 崩溃循环
+#        (keystore.crash_count 涨到 100)
+#     6) TWRP 读不到 /vendor/etc/vintf/manifest_canoe.xml
+#        -> 只能兜底猜 keymaster 4.x
+#     7) **Unable to decrypt metadata encryption** -> FBE 解密失败
+#
+#   实测对照 —— 4 个同平台可用机型 (myron / annibale / nezha / songyuan)
+#   **全部**使用 AOSP 格式，且 /system /vendor /odm 都带 first_stage_mount:
+#       vendor  /vendor  erofs  ro  wait,slotselect,logical,first_stage_mount
+#
+# -----------------------------------------------------------------------------
+# TWRP 专属的 flags 不要写在这里
+# -----------------------------------------------------------------------------
+#   `display=` / `backup=` / `flashimg=` 这些是 TWRP 自己的语法，fs_mgr 看不懂。
+#   它们放在另一个文件: /system/etc/twrp.flags
+#       -> 见 recovery/root/system/etc/twrp.flags
+#
+#   本文件只写 fs_mgr 需要的「可挂载文件系统」。
+#   纯裸设备分区 (boot / recovery / dtbo / vbmeta / modem / ...) 不进这里，
+#   只进 twrp.flags —— 与 songyuan 的做法一致。
+#
+#   数据来源: 原厂 vendor_boot.img 内 first_stage_ramdisk/fstab.qcom (实测提取)
 # =============================================================================
 
-# ===========================================================
-# 动态 / 逻辑分区 (位于 super 分区内, A/B 槽位, erofs 只读)
-# ===========================================================
-/system                erofs    system                                            flags=display="System";logical;slotselect;backup=1
-/system_ext            erofs    system_ext                                        flags=display="System EXT";logical;slotselect;backup=1
-/product               erofs    product                                           flags=display="Product";logical;slotselect;backup=1
-/vendor                erofs    vendor                                            flags=display="Vendor";logical;slotselect;backup=1
-/vendor_dlkm           erofs    vendor_dlkm                                       flags=display="Vendor DLKM";logical;slotselect;backup=1
-/system_dlkm           erofs    system_dlkm                                       flags=display="System DLKM";logical;slotselect;backup=1
-/odm                   erofs    odm                                               flags=display="ODM";logical;slotselect;backup=1
-/mi_ext                erofs    mi_ext                                            flags=display="MI EXT";logical;slotselect;backup=1
+# -----------------------------------------------------------------------------
+# 动态分区 (位于 super 内, logical, A/B 槽位, erofs 只读)
+#
+#   ★ 全部 first_stage_mount —— 必须早于 init.rc 解析，
+#     否则 vendor/odm 的 HAL 服务不会注册（见上方故障链）
+# -----------------------------------------------------------------------------
+system                 /system              erofs  ro  wait,slotselect,logical,first_stage_mount
+system_ext             /system_ext          erofs  ro  wait,slotselect,logical,first_stage_mount
+product                /product             erofs  ro  wait,slotselect,logical,first_stage_mount
+vendor                 /vendor              erofs  ro  wait,slotselect,logical,first_stage_mount
+vendor_dlkm            /vendor_dlkm         erofs  ro  wait,slotselect,logical,first_stage_mount
+system_dlkm            /system_dlkm         erofs  ro  wait,slotselect,logical,first_stage_mount
+odm                    /odm                 erofs  ro  wait,slotselect,logical,first_stage_mount
+mi_ext                 /mi_ext              erofs  ro  wait,slotselect,logical,first_stage_mount,nofail
 
-# ===========================================================
-# 用户数据分区 (f2fs + 文件级加密)
-# 原厂 fstab.qcom 原文:
-#   fileencryption=aes-256-xts:aes-256-cts:v2+inlinecrypt_optimized+wrappedkey_v0
-#   keydirectory=/metadata/vold/metadata_encryption
-#   metadata_encryption=aes-256-xts:wrappedkey_v0
-# ===========================================================
-/data                  f2fs     /dev/block/bootdevice/by-name/userdata            flags=display="Data";backup=1;wipeingui;fileencryption=aes-256-xts:aes-256-cts:v2+inlinecrypt_optimized+wrappedkey_v0;wrappedkey;metadata_encryption=aes-256-xts:wrappedkey_v0;keydirectory=/metadata/vold/metadata_encryption
+# -----------------------------------------------------------------------------
+# 元数据分区 (本机实测为 f2fs, 不是 ext4)
+#   metadata 加密的密钥目录就在这里:
+#       /metadata/vold/metadata_encryption
+#   也带 first_stage_mount —— 解密时需要读它
+# -----------------------------------------------------------------------------
+/dev/block/bootdevice/by-name/metadata  /metadata  f2fs  noatime,nosuid,nodev,discard  wait,check,formattable,first_stage_mount
 
-# ===========================================================
-# 元数据分区 (本机实测为 f2fs)
-# ===========================================================
-/metadata              f2fs     /dev/block/bootdevice/by-name/metadata            flags=display="Metadata";backup=1;wrappedkey
+# -----------------------------------------------------------------------------
+# 用户数据分区 (f2fs + 文件级加密 FBE v2 + metadata 加密)
+#   原厂 fstab.qcom 原文:
+#       fileencryption=aes-256-xts:aes-256-cts:v2+inlinecrypt_optimized+wrappedkey_v0
+#       keydirectory=/metadata/vold/metadata_encryption
+#       metadata_encryption=aes-256-xts:wrappedkey_v0
+#   用 latemount —— 等解密完成后再挂载
+# -----------------------------------------------------------------------------
+/dev/block/bootdevice/by-name/userdata  /data  f2fs  noatime,nosuid,nodev,discard,reserve_root=32768,resgid=1065,fsync_mode=nobarrier,inlinecrypt  latemount,wait,check,formattable,fileencryption=aes-256-xts:aes-256-cts:v2+inlinecrypt_optimized+wrappedkey_v0,keydirectory=/metadata/vold/metadata_encryption,metadata_encryption=aes-256-xts:wrappedkey_v0,quota,reservedsize=128M,sysfs_path=/sys/devices/platform/soc/1d84000.ufshc,checkpoint=fs
 
-# ===========================================================
-# 持久化分区 (TEE / 传感器校准)
-# ===========================================================
-/persist               ext4     /dev/block/bootdevice/by-name/persist             flags=display="Persist";backup=1
+# -----------------------------------------------------------------------------
+# 持久化分区 (TEE / 传感器校准 / 时间偏移)
+# -----------------------------------------------------------------------------
+/dev/block/bootdevice/by-name/persist  /persist  ext4  noatime,nosuid,nodev,barrier=1  wait
 
-# ===========================================================
-# 启动镜像 (物理分区, A/B, 可刷入原始镜像)
-# ===========================================================
-/boot                  emmc     /dev/block/bootdevice/by-name/boot                flags=display="Boot";backup=1;flashimg=1;slotselect
-/init_boot             emmc     /dev/block/bootdevice/by-name/init_boot           flags=display="Init Boot";backup=1;flashimg=1;slotselect
-/vendor_boot           emmc     /dev/block/bootdevice/by-name/vendor_boot         flags=display="Vendor Boot";backup=1;flashimg=1;slotselect
-/recovery              emmc     /dev/block/bootdevice/by-name/recovery            flags=display="Recovery";backup=1;flashimg=1;slotselect
-/dtbo                  emmc     /dev/block/bootdevice/by-name/dtbo                flags=display="DTBO";backup=1;flashimg=1;slotselect
-
-# ===========================================================
-# 验证启动元数据
-# ===========================================================
-/vbmeta                emmc     /dev/block/bootdevice/by-name/vbmeta              flags=display="VBMeta";backup=1;flashimg=1;slotselect
-/vbmeta_system         emmc     /dev/block/bootdevice/by-name/vbmeta_system       flags=display="VBMeta System";backup=1;flashimg=1;slotselect
-
-# ===========================================================
-# 固件分区
-# ===========================================================
-/modem                 vfat     /dev/block/bootdevice/by-name/modem               flags=display="Modem";backup=1;slotselect
-/bluetooth             vfat     /dev/block/bootdevice/by-name/bluetooth           flags=display="Bluetooth";backup=1;slotselect
-/dsp                   ext4     /dev/block/bootdevice/by-name/dsp                 flags=display="DSP";backup=1;slotselect
-
-# ===========================================================
+# -----------------------------------------------------------------------------
 # 杂项 (A/B 启动控制块)
-# ===========================================================
-/misc                  emmc     /dev/block/bootdevice/by-name/misc                flags=display="Misc"
+# -----------------------------------------------------------------------------
+/dev/block/bootdevice/by-name/misc  /misc  emmc  defaults  defaults
 
-# ===========================================================
+# -----------------------------------------------------------------------------
 # 外部存储 (USB OTG)
-# ===========================================================
-/usb_otg               auto     /dev/block/sdg1    /dev/block/sdg                 flags=display="USB OTG";storage;wipeingui;removable
+# -----------------------------------------------------------------------------
+/devices/platform/soc/a600000.ssusb/*.dwc3/xhci-hcd.*.auto*  /usb_otg  auto  nosuid,nodev  wait,voldmanaged=usbotg:auto
