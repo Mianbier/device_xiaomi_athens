@@ -36,23 +36,43 @@ rlog() {
 }
 
 mount_one() {
-    # $1 = 挂载点, $2.. = 候选设备路径
+    # $1 = 挂载点, $2 = 探针文件（真分区里才有、ramdisk 桩里没有）, $3.. = 候选设备
     mp="$1"
-    shift
+    PROBE="$2"
+    shift 2
     mkdir -p "$mp" 2>/dev/null
 
-    # 已经挂上了就直接成功
+    # -------------------------------------------------------------------------
+    # 已经挂上了？—— 但**必须验证挂的是不是真货**！
+    #
+    # ⚠️ 这是上一版踩的大坑：只 grep /proc/mounts 里有没有 /vendor 这一项，
+    #    结果 recovery 的 ramdisk 本身就带一个 /vendor 桩目录
+    #    （里面只有 /vendor/etc/vintf/manifest/ 一个空壳），
+    #    脚本误报"已挂载"，于是跳过了真正的挂载：
+    #      athens-mount-vendor: /vendor 已挂载        <- 假阳性
+    #      Keymaster_Ver: manifest_canoe.xml not found <- 真分区根本没挂
+    #
+    #    判据必须用**真分区里才有、桩目录里没有的文件**，例如
+    #    /vendor/etc/vintf/manifest_canoe.xml（本机实测存在）。
+    # -------------------------------------------------------------------------
     if grep -q " $mp " /proc/mounts 2>/dev/null; then
-        rlog "$mp 已挂载"
-        return 0
+        if [ -e "$PROBE" ]; then
+            rlog "$mp 已挂载且是真分区（$PROBE 存在）"
+            return 0
+        fi
+        rlog "$mp 挂载点存在但缺少 $PROBE —— 是 ramdisk 桩，继续尝试真实挂载"
     fi
 
     for dev in "$@"; do
         [ -e "$dev" ] || continue
         for fs in erofs ext4; do
             if mount -t "$fs" -o ro,barrier=0 "$dev" "$mp" 2>/dev/null; then
-                rlog "挂载成功 $mp <- $dev ($fs)"
-                return 0
+                if [ -z "$PROBE" ] || [ -e "$PROBE" ]; then
+                    rlog "挂载成功 $mp <- $dev ($fs)"
+                    return 0
+                fi
+                rlog "$dev 挂上了但缺少 $PROBE，换下一个"
+                umount "$mp" 2>/dev/null
             fi
         done
     done
@@ -64,8 +84,8 @@ mount_one() {
 rlog "start"
 
 # ---- /vendor ----
-# 候选顺序：TWRP 建好的 by-name 链接 -> mapper 的 a/b 槽 -> 裸 dm 设备
-mount_one /vendor \
+# 探针：真分区里实测存在、ramdisk 桩里没有的文件（见 mount_one 里的说明）
+mount_one /vendor /vendor/etc/vintf/manifest_canoe.xml \
     /dev/block/bootdevice/by-name/vendor \
     /dev/block/mapper/vendor_a \
     /dev/block/mapper/vendor_b \
@@ -74,7 +94,7 @@ mount_one /vendor \
 V=$?
 
 # ---- /odm ----
-mount_one /odm \
+mount_one /odm /odm/etc/vintf/manifest/android.hardware.security.keymint3-service.strongbox.nxp.xml \
     /dev/block/bootdevice/by-name/odm \
     /dev/block/mapper/odm_a \
     /dev/block/mapper/odm_b \
