@@ -124,6 +124,9 @@ on property:twrp.modules.loaded=true
     # 这里**故意不加 `wait /sys/class/touch/...`**: 万一节点始终不出现,
     # wait 会把整个 property trigger 卡死。
     # -------------------------------------------------------------------------
+    # 单次写入, 用 init 内建 write —— 不经 shell、无 sleep、无循环。
+    # 保证"开机必有一次可靠写入", 不依赖任何用户态程序。
+    write /sys/class/touch/touch_dev/enable_touch_raw 0
     start touch-raw-guard
 
 # 注意: 这里用 /system/bin/sh 显式解释脚本, 不依赖文件的可执行位 ——
@@ -140,12 +143,44 @@ service athens-touch-fw-load /system/bin/sh /system/bin/athens-touch-fw-load.sh
 #
 #   enable_touch_raw=1 会让 IC 改推 RAW/THP 原始帧, 驱动解析不出触点,
 #   getevent 上什么都看不到, 表现就是"完全没有触控"。
-#   一次性写入会被固件强制升级后的 IC 复位冲掉, 所以必须常驻。
+#   一次性写入会被固件强制升级后的 IC 复位冲掉, 所以需要常驻一会儿。
 #
-#   这是 myron (同平台已验证可用) 的原样实现。
+# -----------------------------------------------------------------------------
+# ⚠️⚠️ 上一版这里踩了大坑: 循环变成了 2310Hz 全速空转
+#
+#   原写法: "while true; do echo 0 > ...; sleep 1; done"
+#   实测 (12.1 内核日志 kmsg, 32123 条 / 13.9 秒 = 2310.1 次/秒):
+#
+#       [MI_TP_E][store_enable_touch_raw:367]: enable touch raw 0
+#       相邻间隔中位数 429us, 99.96% 都 <1ms
+#       间隔 ~1s 的条目: 0 条            ← 完全没有 1 秒间隔
+#
+#   已逐项排除: 命令串完整 (adb pull /proc/<pid>/cmdline 确认 sleep 1 在里面)、
+#               PATH 正确 (PATH=/sbin:/system/bin)、sleep 符号链接有效
+#               (→toybox)、toybox 里确实有 sleep applet。
+#               → 具体原因仍未定位, 但现象与危害是确定的。
+#
+#   危害 (一个原因解释三个症状):
+#     ① 拖拽被高频写入持续打断 -> 拖拽切成点击
+#        => 锁屏"上滑解锁"滑不动 / "只有特定界面才有触控"
+#     ② CPU 空转 (实测 recovery 空闲占 13.5% CPU)
+#     ③ 触控延迟特别高
+#
+# -----------------------------------------------------------------------------
+# 本版设计: 有界循环 + 绝对路径 + 零 `$` 引用
+#
+#   1) **有界**: 嵌套 for 遍历字面量列表, 12 x 5 = 60 轮, 每轮 5 秒
+#      => 覆盖开机后 5 分钟 (固件升级窗口足够了)。
+#      即使 sleep 再次失效, **最多空转 60 次就退出**, 危害封顶。
+#   2) **绝对路径** /system/bin/toybox sleep 5 —— 不依赖 PATH。
+#   3) **零 `$`**: 不用 $i / $(...) / ${...}。因为 init 会对 service 参数做
+#      属性展开 (${name} 会被替换成属性值), 字符串里出现 $ 有被改写风险。
+#      嵌套 for 不需要引用循环变量, 所以可以完全避开。
+#   4) 另有一道保险: 上面的 `write /sys/... 0` 是 init 内建命令,
+#      不经 shell, 保证"开机必有一次可靠写入"。
 # -----------------------------------------------------------------------------
 service touch-raw-guard /system/bin/sh -c \
-    "while true; do echo 0 > /sys/class/touch/touch_dev/enable_touch_raw 2>/dev/null; echo 0 > /sys/devices/virtual/touch/touch_dev/enable_touch_raw 2>/dev/null; sleep 1; done"
+    "for a in 1 2 3 4 5 6 7 8 9 10 11 12; do for b in 1 2 3 4 5; do echo 0 > /sys/class/touch/touch_dev/enable_touch_raw 2>/dev/null; echo 0 > /sys/devices/virtual/touch/touch_dev/enable_touch_raw 2>/dev/null; /system/bin/toybox sleep 5; done; done"
     class main
     user root
     group root system input
