@@ -195,23 +195,34 @@ BOOT_SECURITY_PATCH := $(PLATFORM_SECURITY_PATCH)
 # =========================================================
 TARGET_SCREEN_WIDTH := 1156
 TARGET_SCREEN_HEIGHT := 2510
+# 注: TARGET_SCREEN_DENSITY 在橙狐 14.1 的 bootable/recovery 里**全树 0 命中**
+#     (没有任何构建文件读它)。保留只是因为同平台 4/4 机型都这么写, 属于无害惯例。
 TARGET_SCREEN_DENSITY := 480
 TARGET_RECOVERY_PIXEL_FORMAT := "RGBX_8888"
 TW_THEME := portrait_hdpi
 TW_NO_SCREEN_BLANK := true
 
 # -----------------------------------------------------------------------------
-# TW_SCREEN_BLANK_ON_BOOT := true  —— 同平台 4/4 机型都开, 我们也开
+# TW_SCREEN_BLANK_ON_BOOT := true
 #
-#   gui/gui.cpp:895 里它做的是:
+#   ⚠️ 诚实说明: 这个开关在橙狐 14.1 里**没有接线**。
+#      全树只有 gui/gui.cpp:895 的 `#ifdef TW_SCREEN_BLANK_ON_BOOT`,
+#      没有任何 Android.mk / Android.bp / *.go 定义这个宏 —— 所以它目前是空操作。
+#
+#      保留它的理由只有一个: 同平台 4/4 机型 (myron/annibale/nezha/songyuan)
+#      全都写了这一行。如果哪天橙狐在 recovery 树之外补上接线, 我们就能跟
+#      已验证配置保持一致。它对当前构建无副作用。
+#
+#   gui/gui.cpp:895 的原意 (供将来接线后参考):
 #       blankTimer.blank();  blankTimer.resetTimerAndUnblank();
-#   即"立刻灭一次再立刻点亮"。这是这几块 QCOM cmd-mode 面板的开机初始化
-#   怪癖补偿 (面板从上电到能正常出图之间需要一次 blank/unblank 往返)。
+#   即"立刻灭一次再立刻点亮", 是这几块 QCOM cmd-mode 面板的开机初始化怪癖补偿。
+#   因为已经开了 TW_NO_SCREEN_BLANK, blank() 不会走 gr_fb_blank(),
+#   只把背光写 0 然后马上恢复, 不存在"开机黑屏"风险。
 #
-#   因为我们已经开了 TW_NO_SCREEN_BLANK, blank() 不会走 gr_fb_blank(),
-#   只把背光写 0 然后马上恢复, 不存在"开机黑屏"的风险。
-#   之前这里注释掉的理由是"怕黑屏", 那是误解 —— 真正会造成黑屏的是
-#   屏幕超时 (blankTimer.checkForTimeout) 而触摸又不能用, 唤不醒。
+#   真正会造成「黑屏且唤不醒」的是屏幕超时 (blankTimer.checkForTimeout):
+#   它把背光写 0, 而触摸又不能用就唤不醒。所以先修触摸。
+#   若触摸一时修不好, 可用 TW_NO_SCREEN_TIMEOUT := true 临时保命
+#   (这个开关**是**接了线的: Android.mk:252)。
 # -----------------------------------------------------------------------------
 TW_SCREEN_BLANK_ON_BOOT := true
 
