@@ -1,0 +1,80 @@
+# =============================================================================
+# twrp.flags — Xiaomi athens (Redmi K100 Pro) / Canoe / SM8850 / Android 16
+#
+# ★ 这是 TWRP v2 格式的 fstab，只给 TWRP 自己用 ★
+#
+#   格式: <mount_point> <fs_type> <device> [device2] <flags>
+#
+#   分工说明:
+#     /etc/recovery.fstab          -> AOSP fs_mgr 格式，第一级 init 用它挂载
+#                                     (/system /vendor /odm 带 first_stage_mount)
+#     /system/etc/twrp.flags       -> 本文件，给 TWRP 提供 display= / backup= /
+#                                     flashimg= / storage= 等 UI 与备份能力
+#
+#   TWRP 会先解析 recovery.fstab，再用本文件里的条目去「补充/覆盖」flags。
+#   两者必须都覆盖到同样的挂载点，否则 TWRP 里那个分区会没有显示名或不能备份。
+#
+#   这套双文件分工与同平台已验证机型一致:
+#     myron / annibale / nezha / songyuan
+# =============================================================================
+
+# ===========================================================
+# 动态 / 逻辑分区 (位于 super 分区内, A/B 槽位, erofs 只读)
+# ===========================================================
+/system                erofs    system                                            flags=display="System";logical;slotselect;backup=1
+/system_ext            erofs    system_ext                                        flags=display="System EXT";logical;slotselect;backup=1
+/product               erofs    product                                           flags=display="Product";logical;slotselect;backup=1
+/vendor                erofs    vendor                                            flags=display="Vendor";logical;slotselect;backup=1
+/vendor_dlkm           erofs    vendor_dlkm                                       flags=display="Vendor DLKM";logical;slotselect;backup=1
+/system_dlkm           erofs    system_dlkm                                       flags=display="System DLKM";logical;slotselect;backup=1
+/odm                   erofs    odm                                               flags=display="ODM";logical;slotselect;backup=1
+/mi_ext                erofs    mi_ext                                            flags=display="MI EXT";logical;slotselect;backup=1
+
+# ===========================================================
+# 用户数据分区 (f2fs + 文件级加密)
+#   fileencryption / keydirectory / metadata_encryption 三个参数
+#   必须与 recovery.fstab 里保持一致
+# ===========================================================
+/data                  f2fs     /dev/block/bootdevice/by-name/userdata            flags=display="Data";backup=1;wipeingui;formattable;storage;quota;fileencryption=aes-256-xts:aes-256-cts:v2+inlinecrypt_optimized+wrappedkey_v0;wrappedkey;metadata_encryption=aes-256-xts:wrappedkey_v0;keydirectory=/metadata/vold/metadata_encryption
+
+# ===========================================================
+# 元数据分区 (本机实测为 f2fs)
+# ===========================================================
+/metadata              f2fs     /dev/block/bootdevice/by-name/metadata            flags=display="Metadata";backup=1;wrappedkey
+
+# ===========================================================
+# 持久化分区 (TEE / 传感器校准)
+# ===========================================================
+/persist               ext4     /dev/block/bootdevice/by-name/persist             flags=display="Persist";backup=1
+
+# ===========================================================
+# 启动镜像 (物理分区, A/B, 可刷入原始镜像)
+# ===========================================================
+/boot                  emmc     /dev/block/bootdevice/by-name/boot                flags=display="Boot";backup=1;flashimg=1;slotselect
+/init_boot             emmc     /dev/block/bootdevice/by-name/init_boot           flags=display="Init Boot";backup=1;flashimg=1;slotselect
+/vendor_boot           emmc     /dev/block/bootdevice/by-name/vendor_boot         flags=display="Vendor Boot";backup=1;flashimg=1;slotselect
+/recovery              emmc     /dev/block/bootdevice/by-name/recovery            flags=display="Recovery";backup=1;flashimg=1;slotselect
+/dtbo                  emmc     /dev/block/bootdevice/by-name/dtbo                flags=display="DTBO";backup=1;flashimg=1;slotselect
+
+# ===========================================================
+# 验证启动元数据
+# ===========================================================
+/vbmeta                emmc     /dev/block/bootdevice/by-name/vbmeta              flags=display="VBMeta";backup=1;flashimg=1;slotselect
+/vbmeta_system         emmc     /dev/block/bootdevice/by-name/vbmeta_system       flags=display="VBMeta System";backup=1;flashimg=1;slotselect
+
+# ===========================================================
+# 固件分区
+# ===========================================================
+/modem                 vfat     /dev/block/bootdevice/by-name/modem               flags=display="Modem";backup=1;slotselect
+/bluetooth             vfat     /dev/block/bootdevice/by-name/bluetooth           flags=display="Bluetooth";backup=1;slotselect
+/dsp                   ext4     /dev/block/bootdevice/by-name/dsp                 flags=display="DSP";backup=1;slotselect
+
+# ===========================================================
+# 杂项 (A/B 启动控制块)
+# ===========================================================
+/misc                  emmc     /dev/block/bootdevice/by-name/misc                flags=display="Misc"
+
+# ===========================================================
+# 外部存储 (USB OTG)
+# ===========================================================
+/usb_otg               auto     /dev/block/sdg1    /dev/block/sdg                 flags=display="USB OTG";storage;wipeingui;removable
