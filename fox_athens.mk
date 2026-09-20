@@ -30,6 +30,17 @@ OF_MAINTAINER := WorkBuddy
 OF_MAINTAINER_PATCH_VERSION := 1
 OF_MAINTAINER_AVATAR := /dev/null
 
+# --- 锁屏：必须给可点击的按钮，不能只靠上滑 ---
+#   实测故障：按电源键 -> blanktimer.toggleBlank() -> 弹出锁屏覆盖层
+#   (gui/gui.cpp:453, 注意它**不受** TW_NO_SCREEN_TIMEOUT 保护)。
+#   锁屏默认要"上滑"解锁，而本机的**拖拽手势是坏的**（触摸 IC 的 RAW 上报
+#   会打断连续移动，只留下点击）-> 用户被卡在锁屏进不去 recovery。
+#
+#   OF_USE_LOCKSCREEN_BUTTON=1 会让锁屏显示一个**可点击**的解锁按钮
+#   (data.cpp 里置 lock_btn=1，主题据此渲染按钮)。
+#   点击在本机是好的，这样就有绕开坏掉手势的入口。
+OF_USE_LOCKSCREEN_BUTTON := 1
+
 # --- 屏幕 / 状态栏 ---
 OF_SCREEN_H := 2510
 OF_SCREEN_W := 1156
