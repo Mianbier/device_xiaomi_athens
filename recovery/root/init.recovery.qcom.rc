@@ -129,6 +129,21 @@ on property:twrp.modules.loaded=true
     write /sys/class/touch/touch_dev/enable_touch_raw 0
     start touch-raw-guard
 
+    # -------------------------------------------------------------------------
+    # ★★★ 挂载 /vendor /odm —— /data 解密的前提 ★★★
+    #
+    #   实测: recovery 下 /vendor /odm 默认不挂载 -> vendor HAL 不注册 ->
+    #         keystore2 崩溃循环 (crash_count 破 100, 持续烧 CPU、机身发烫)
+    #         -> 读不到 manifest_canoe.xml -> Unable to decrypt metadata
+    #             encryption -> /data 解密失败
+    #
+    #   挂上之后由 athens.vendor.mounted=1 触发下面的 HAL 服务启动。
+    #   此时 dm 设备 / by-name 链接已经就绪（TWRP 刚做完 fstab 处理）。
+    #
+    #   ⚠️ 脚本里绝不挂载 /system（会把 ramdisk 的 /system/bin/sh 覆盖掉）
+    # -------------------------------------------------------------------------
+    start athens-mount-vendor
+
 # 注意: 这里用 /system/bin/sh 显式解释脚本, 不依赖文件的可执行位 ——
 #       Windows 上 git 可能把 mode 记成 100644, 到 CI 上就没有 +x 了。
 service athens-touch-fw-load /system/bin/sh /system/bin/athens-touch-fw-load.sh
@@ -186,3 +201,67 @@ service touch-raw-guard /system/bin/sh -c \
     group root system input
     oneshot
     seclabel u:r:recovery:s0
+
+# =============================================================================
+# /vendor 挂载 + vendor HAL —— /data 解密的关键
+# =============================================================================
+# 背景（全部是本机实测结论）:
+#   * recovery 下 /vendor /odm 默认不挂载
+#   * 手动 `mount -t erofs -o ro /dev/block/dm-8 /vendor` 能成功
+#   * 挂上后 /vendor/bin/hw/android.hardware.security.onekeymint-service-qti
+#     能正常启动并进入 futex_wait，无 SELinux 拒绝
+#   * 设备用的是 **AIDL KeyMint v4**（接口名 android.hardware.security.keymint
+#     / IKeyMintDevice/default），不是 HIDL keymaster
+#     —— /vendor/bin/hw 下的 keymaster@4.0-service-qti 只是个没有 rc 文件、
+#        没有 manifest 条目的遗留二进制，不用管它
+#
+# 三个必须注意的点:
+#   1) **seclabel 必须是 u:r:recovery:s0**
+#      recovery 的精简 SELinux 策略里没有 vendor HAL 的域
+#      （hal_keymint_default 等），用原厂 seclabel 会导致服务起不来。
+#      这是同平台 myron 的做法。
+#   2) **必须 setenv LD_LIBRARY_PATH** 指向 /vendor/lib64
+#      本机实测缺了会直接 CANNOT LINK（12.1 就是缺 libapexsupport.so）
+#   3) 属性名用 athens.vendor.mounted 而不是 vendor.mounted
+#      —— 避开 vendor.* 前缀可能触发的 SELinux 限制
+# =============================================================================
+
+service athens-mount-vendor /system/bin/sh /system/bin/athens-mount-vendor.sh
+    disabled
+    oneshot
+    user root
+    group root system
+    seclabel u:r:recovery:s0
+
+# /vendor 挂好后再起 HAL（保证顺序：挂载 -> 启动）
+on property:athens.vendor.mounted=1
+    start vendor.keymint
+    start vendor.gatekeeper
+    start vendor.secretkeeper
+
+# KeyMint (AIDL v4, QTI onekeymint) —— metadata 解密靠它
+service vendor.keymint /vendor/bin/hw/android.hardware.security.onekeymint-service-qti
+    disabled
+    oneshot
+    user system
+    group system drmrpc
+    seclabel u:r:recovery:s0
+    setenv LD_LIBRARY_PATH /vendor/lib64:/vendor/lib64/hw:/system/lib64
+
+# Gatekeeper (QTI, Rust 实现) —— 校验用户凭据（PIN/图案）时需要
+service vendor.gatekeeper /vendor/bin/hw/android.hardware.gatekeeper-rust-service-qti
+    disabled
+    oneshot
+    user system
+    group system drmrpc
+    seclabel u:r:recovery:s0
+    setenv LD_LIBRARY_PATH /vendor/lib64:/vendor/lib64/hw:/system/lib64
+
+# Secretkeeper (Android 16 的用户凭据后端)
+service vendor.secretkeeper /vendor/bin/hw/android.hardware.security.secretkeeper-service-qti
+    disabled
+    oneshot
+    user system
+    group system drmrpc
+    seclabel u:r:recovery:s0
+    setenv LD_LIBRARY_PATH /vendor/lib64:/vendor/lib64/hw:/system/lib64
