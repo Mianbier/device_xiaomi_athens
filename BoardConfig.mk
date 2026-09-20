@@ -227,6 +227,23 @@ TW_NO_SCREEN_BLANK := true
 TW_SCREEN_BLANK_ON_BOOT := true
 
 # -----------------------------------------------------------------------------
+# TW_NO_SCREEN_TIMEOUT := true  —— 【本次 bring-up 临时保险，触摸确认后删掉】
+#
+#   这个开关**是接了线的**: Android.mk:252 `ifneq ($(TW_NO_SCREEN_TIMEOUT),)`
+#   -> `-DTW_NO_SCREEN_TIMEOUT`。定义后 gui/blanktimer.cpp 的
+#   checkForTimeout() 整个函数体被编译掉, 屏幕永不自动熄灭。
+#
+#   为什么要临时开:
+#       14.1 上一版触摸完全不能用, 而屏幕超时会把背光写 0 —— 于是屏幕变黑
+#       且唤不醒 (processInput 里 KEY_POWER 被显式排除在 unblank 之外,
+#       只有音量键能唤醒), 用户无法判断 recovery 到底起没起来。
+#       这是已经发生过两次的失败模式。
+#
+#   触摸确认可用后, 把这一行删掉即可恢复正常息屏。
+# -----------------------------------------------------------------------------
+TW_NO_SCREEN_TIMEOUT := true
+
+# -----------------------------------------------------------------------------
 # TW_FRAMERATE := 120  —— 不要写, 在 OrangeFox 14.1 里它是死配置
 #
 #   全树检索确认: TW_FRAMERATE 只出现在
