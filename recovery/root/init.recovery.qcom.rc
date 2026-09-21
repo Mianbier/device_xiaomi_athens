@@ -127,6 +127,14 @@ on property:twrp.modules.loaded=true
     # 单次写入, 用 init 内建 write —— 不经 shell、无 sleep、无循环。
     # 保证"开机必有一次可靠写入", 不依赖任何用户态程序。
     write /sys/class/touch/touch_dev/enable_touch_raw 0
+
+    # ★ 深度复位（R13 新增）:
+    #   5 秒轮询的守卫压不住 ESD reset 带来的 RAW 回归（见 diag/dec/kmsg_141_R13.txt）,
+    #   所以先做一次 0->1->0 的 toggle 强迫驱动重新下发模式配置。
+    #   它自己内部会 sleep, 因此用单独的 oneshot 服务跑, 不阻塞本 trigger。
+    chmod 0755 /system/bin/athens-touch-deep-reset.sh
+    start athens-touch-deep-reset
+
     start touch-raw-guard
 
     # -------------------------------------------------------------------------
@@ -195,8 +203,46 @@ service athens-touch-fw-load /system/bin/sh /system/bin/athens-touch-fw-load.sh
 #   4) 另有一道保险: 上面的 `write /sys/... 0` 是 init 内建命令,
 #      不经 shell, 保证"开机必有一次可靠写入"。
 # -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# touch-raw-guard —— 把 FocalTech 摁在"普通坐标上报"模式
+#
+#   enable_touch_raw=1 会让 IC 改推 RAW/THP 原始帧, 驱动解析不出触点,
+#   getevent 上什么都看不到, 表现就是"完全没有触控"。
+#
+# ★★★ R13 实测结论：5 秒间隔压不住，必须加快 ★★★
+#
+#   R13 14.1 取证 (diag/dec/kmsg_141_R13.txt)：
+#     * unknown touch event(5) 5037 条, 速率 83.8/s   <- RAW 模式洪水的铁证
+#     * fts_esdcheck_tp_reset 触发 10 次           <- 每次 reset 后 IC 重新进 RAW
+#     * enable_touch_raw 读回 = 0（写是成功的）
+#     * 守卫写入 26 次, 全部成功 (store_enable_touch_raw)
+#     * getevent -lt /dev/input/event7 采样 9 秒 -> 0 条事件
+#       （TWRP pid 464 确实已打开 event7, fd 9, 问题不在 TWRP 侧）
+#
+#   => 结论: **寄存器被写回 0, 但 IC 实际仍在推 RAW 帧**。
+#      即"设值"与"生效"之间有 gap，而 ESD reset 每次都会把 IC 拉回 RAW，
+#      5 秒一次的轮询远慢于 reset 发生频率，压不住。
+#
+#   这也解释了用户观察到的"上滑有概率成功":
+#      reset 后有短暂窗口 IC 会漏出几帧正常 MT 事件 -> 偶尔解锁成功。
+#      => 不是 TWRP 锁屏逻辑坏, 是**事件源间歇性可用**。
+#
+# ★ 本版对策（三管齐下）★
+#
+#   1) **间隔 5s -> 1s**（R13 是 83.8 事件/秒的洪水, 1s 仍算不上高频，
+#      且 sysfs 写入本身极廉价，不会像旧版 while-true 那样空转）
+#   2) **深度复位**：不满足于写 0，而是走一遍
+#        0 -> 1 -> 0  （toggle，强制驱动侧重新下发模式配置）
+#      外加 enable_touch_raw 的双路径同时写（myron / songyuan 两种 sysfs 路径）
+#   3) **保留有界循环**：24 x 60 = 1440 轮 x 1s ≈ 24 分钟覆盖。
+#      即使 sleep 再次失效, 最多空转 1440 次就退出，危害封顶
+#      （旧版 `while true` 是无上限的 2310Hz 空转，已废）
+#
+#   4) **零 `$`**: init 会对 service 参数做属性展开 (${name} 会被替换成属性值),
+#      字符串里出现 $ 有被改写风险。嵌套 for 不需要引用循环变量, 完全避开。
+# -----------------------------------------------------------------------------
 service touch-raw-guard /system/bin/sh -c \
-    "for a in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24; do for b in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do echo 0 > /sys/class/touch/touch_dev/enable_touch_raw 2>/dev/null; echo 0 > /sys/devices/virtual/touch/touch_dev/enable_touch_raw 2>/dev/null; /system/bin/toybox sleep 5; done; done"
+    "for a in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24; do for b in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60; do echo 0 > /sys/class/touch/touch_dev/enable_touch_raw 2>/dev/null; echo 0 > /sys/devices/virtual/touch/touch_dev/enable_touch_raw 2>/dev/null; /system/bin/toybox sleep 1; done; done"
     class main
     user root
     group root system input
@@ -232,6 +278,21 @@ service athens-mount-vendor /system/bin/sh /system/bin/athens-mount-vendor.sh
     oneshot
     user root
     group root system
+    seclabel u:r:recovery:s0
+
+# athens-touch-deep-reset —— 把 IC 从 RAW 模式彻底踢出来（toggle 0->1->0）
+#
+#   比守卫的"轮询写 0"更强: toggle 能迫使驱动重新下发模式配置,
+#   因为只写 0 时驱动可能判定"值未变化"而跳过下发 (R13 实测的症状)。
+#   内部有 sleep（约 15 秒），所以必须独立成服务，不能写在 property trigger 里。
+#
+#   ⚠️ 用 /system/bin/sh 显式解释脚本，不依赖可执行位
+#      （Windows 上 git 可能把 mode 记成 100644，到 CI 就没有 +x 了）。
+service athens-touch-deep-reset /system/bin/sh /system/bin/athens-touch-deep-reset.sh
+    disabled
+    oneshot
+    user root
+    group root system input
     seclabel u:r:recovery:s0
 
 # /vendor 挂好后再起 HAL（保证顺序：挂载 -> 启动）
