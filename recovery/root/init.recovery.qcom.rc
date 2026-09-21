@@ -300,11 +300,30 @@ on property:athens.vendor.mounted=1
     start vendor.keymint
     start vendor.gatekeeper
     start vendor.secretkeeper
+    # 启动快照: 把挂载表 / HAL 状态 / VINTF 可读性 / 输入设备 / RAW 模式
+    # 一次性固化进 recovery.log。放在这里是因为它是最后一步,
+    # 前面挂载和 HAL 都已经就位, 快照才有意义。
+    chmod 0755 /system/bin/athens-diag.sh
+    start athens-diag
 
-# KeyMint (AIDL v4, QTI onekeymint) —— metadata 解密靠它
-service vendor.keymint /vendor/bin/hw/android.hardware.security.onekeymint-service-qti
+# 诊断快照服务（见 athens-diag.sh 里的说明）
+service athens-diag /system/bin/sh /system/bin/athens-diag.sh
     disabled
     oneshot
+    user root
+    group root system
+    seclabel u:r:recovery:s0
+
+# KeyMint (AIDL v4, QTI onekeymint) —— metadata 解密靠它
+#
+# ⚠️ 刻意**不加 oneshot**:
+#   R13 实测 keystore2 会 SIGABRT 崩溃 (kmsg: "Service 'keystore2' (pid 1251)
+#   received signal 6"), 而 HAL 自身在启动快照里是 running
+#   (recovery.log: init.svc.vendor.keymint=running, pid 559)。
+#   HAL 是常驻守护进程, 一旦退出必须让 init 把它拉回来;
+#   oneshot 会让它"退出即终结", 再也没有第二次机会。
+service vendor.keymint /vendor/bin/hw/android.hardware.security.onekeymint-service-qti
+    disabled
     user system
     group system drmrpc
     seclabel u:r:recovery:s0
@@ -313,7 +332,6 @@ service vendor.keymint /vendor/bin/hw/android.hardware.security.onekeymint-servi
 # Gatekeeper (QTI, Rust 实现) —— 校验用户凭据（PIN/图案）时需要
 service vendor.gatekeeper /vendor/bin/hw/android.hardware.gatekeeper-rust-service-qti
     disabled
-    oneshot
     user system
     group system drmrpc
     seclabel u:r:recovery:s0
@@ -322,7 +340,6 @@ service vendor.gatekeeper /vendor/bin/hw/android.hardware.gatekeeper-rust-servic
 # Secretkeeper (Android 16 的用户凭据后端)
 service vendor.secretkeeper /vendor/bin/hw/android.hardware.security.secretkeeper-service-qti
     disabled
-    oneshot
     user system
     group system drmrpc
     seclabel u:r:recovery:s0
